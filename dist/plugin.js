@@ -2,6 +2,7 @@ exports.version = 1
 exports.description = "OpenID Connect login and SSO with Keycloak and other OIDC providers"
 exports.apiRequired = 13.1
 exports.repo = 'rejetto/hfs-openid-connect'
+exports.preview = ['https://raw.githubusercontent.com/rejetto/hfs-openid-connect/main/docs/config.png']
 exports.frontend_js = 'main.js'
 exports.configDialog = { sx: { maxWidth: 'min(600px, calc(100vw - 64px))' } }
 
