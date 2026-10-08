@@ -1,9 +1,10 @@
-exports.version = 1.1
+exports.version = 1.2
 exports.description = "OpenID Connect login and SSO with Keycloak and other OIDC providers"
 exports.apiRequired = 13.1
 exports.repo = 'rejetto/hfs-openid-connect'
 exports.preview = ['https://raw.githubusercontent.com/rejetto/hfs-openid-connect/main/docs/config.png']
 exports.changelog = [
+    { version: 1.2, message: "Nicer button" },
     { version: 1.1, message: "Use HFS's main address or the login request instead of requiring a separate Public HFS URL" },
 ]
 exports.frontend_js = 'main.js'

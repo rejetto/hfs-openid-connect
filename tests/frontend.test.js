@@ -18,6 +18,10 @@ test('login starts at the current HFS address and carries the IP-change checkbox
     })
     const button = render().children[0]
     assert.equal(button.props.type, 'button')
+    assert.equal(button.props.style.width, '100%')
+    assert.equal(button.children[0].tag, 'svg')
+    assert.equal(button.children[0].props['aria-hidden'], true)
+    assert.equal(button.children[1], 'OpenID Connect')
     button.props.onClick()
     assert.equal(destination.origin, 'https://files.example')
     assert.equal(destination.pathname, '/internal/~/openid-connect/login')
