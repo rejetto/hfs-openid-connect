@@ -1,8 +1,11 @@
-exports.version = 1
+exports.version = 1.1
 exports.description = "OpenID Connect login and SSO with Keycloak and other OIDC providers"
 exports.apiRequired = 13.1
 exports.repo = 'rejetto/hfs-openid-connect'
 exports.preview = ['https://raw.githubusercontent.com/rejetto/hfs-openid-connect/main/docs/config.png']
+exports.changelog = [
+    { version: 1.1, message: "Use HFS's main address or the login request instead of requiring a separate Public HFS URL" },
+]
 exports.frontend_js = 'main.js'
 exports.configDialog = { sx: { maxWidth: 'min(600px, calc(100vw - 64px))' } }
 
@@ -11,8 +14,6 @@ exports.config = {
         helperText: "For Keycloak: https://sso.example.com/realms/my-realm. Before changing provider, remove or review all existing account links." },
     clientId: { label: "Client ID", required: true, sm: 6 },
     _clientSecret: { label: "Client secret", sm: 6, inputProps: { type: 'password' }, helperText: "Leave empty for a public client" },
-    publicUrl: { label: "Public HFS URL", required: true, frontend: true,
-        helperText: "HTTPS address of HFS, including any proxy prefix, e.g. https://files.example.com/hfs/" },
     buttonLabel: { label: "Login button text", frontend: true, sm: 6, helperText: "Optional, e.g. Sign in with Keycloak" },
     usernamePrefix: { label: "Username prefix", defaultValue: 'oidc-', sm: 6,
         helperText: "For new accounts only. Leave empty for no prefix; existing accounts keep their names." },
@@ -67,9 +68,16 @@ exports.init = api => {
         ctx.set('Referrer-Policy', 'no-referrer')
         try {
             if (ctx.method !== 'GET') ctx.throw(405, "Use GET for OpenID Connect login")
-            const base = publicBase()
-            const redirectUri = new URL('.' + route + 'callback', base).href
             if (ctx.path === route + 'login') {
+                const base = publicBase(ctx)
+                const canonicalLogin = new URL('.' + route + 'login', base)
+                if (api.getHfsConfig('base_url') && base.href !== requestBase(ctx).href) {
+                    // create the transaction after moving to the canonical origin so its session cookie reaches the callback
+                    canonicalLogin.search = ctx.querystring
+                    ctx.redirect(canonicalLogin.href)
+                    return
+                }
+                const redirectUri = new URL('.' + route + 'callback', base).href
                 const startedRevision = revision
                 const client = await getClient()
                 if (pending.size >= 1000) ctx.throw(503, "Too many pending logins; try again shortly")
@@ -129,16 +137,24 @@ exports.init = api => {
         }
     }
 
-    function publicBase() {
-        const url = new URL(api.getConfig('publicUrl'))
+    function publicBase(ctx) {
+        const configured = api.getHfsConfig('base_url')
+        const url = configured ? new URL(configured) : requestBase(ctx)
         if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
-            throw Error("Public HFS URL must be HTTPS without credentials, query or fragment")
+            throw Error("The public HFS address must be HTTPS without credentials, query or fragment")
         url.pathname = url.pathname.replace(/\/?$/, '/')
         return url
     }
 
+    function requestBase(ctx) {
+        const url = new URL(ctx.URL.origin)
+        url.pathname = (ctx.state.revProxyPath || '').replace(/\/?$/, '/')
+        return url
+    }
+
     function returnPath(value, base) {
-        const url = new URL(typeof value === 'string' ? value : base.pathname, base)
+        if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) return base.href
+        const url = new URL('.' + value, base)
         // return only to a folder within this HFS installation, never an external site
         return url.origin === base.origin && url.pathname.startsWith(base.pathname)
             ? url.origin + url.pathname : base.href

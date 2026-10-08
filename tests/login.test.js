@@ -167,15 +167,15 @@ test('OIDC authorization code flow and HFS account boundaries', async t => {
     })
     await t.test('blocks external return redirects and rejects non-GET callbacks', async () => {
         const h = harness()
-        for (const path of ['https://evil.example/', '//evil.example/', '/outside/']) {
+        for (const path of ['https://evil.example/', '//evil.example/', '/../outside/']) {
             const login = await start(h, path)
             assert.equal((await finish(h, login)).location, 'https://files.example/prefix/')
         }
         assert.equal((await h.request('/callback', '', {}, 'POST')).status, 405)
     })
-    await t.test('a double-slash path cannot turn a same-origin return URL into an external redirect', async () => {
-        const h = harness({ publicUrl: 'https://files.example/' })
-        const login = await start(h, 'https://files.example//example.invalid/path')
+    await t.test('a double-slash path cannot turn a return path into an external redirect', async () => {
+        const h = harness({}, { base_url: 'https://files.example' })
+        const login = await start(h, '//example.invalid/path', false, { prefix: '' })
         const callback = await finish(h, login)
         assert.equal(new URL(callback.location).origin, 'https://files.example')
     })
@@ -189,9 +189,27 @@ test('OIDC authorization code flow and HFS account boundaries', async t => {
         assert.equal(restricted.session.allow_session_ip_change, false)
     })
 
-    function harness(overrides = {}) {
+    await t.test('uses the initiating request when HFS has no main address', async () => {
+        const h = harness({}, { base_url: '' })
+        const login = await start(h, '/folder/', false, { origin: 'https://alias.example', prefix: '/mounted' })
+        assert.equal(login.redirectUri, 'https://alias.example/mounted/~/openid-connect/callback')
+        assert.equal((await finish(h, login, {}, false, {}, { origin: 'https://alias.example', prefix: '/mounted' })).location,
+            'https://alias.example/mounted/folder/')
+    })
+
+    await t.test('moves to the HFS main address before creating the transaction', async () => {
+        const h = harness({}, { base_url: 'https://files.example/public' })
+        const query = 'returnTo=%2Ffolder%2F&allow_session_ip_change=1'
+        const first = await h.request('/login', query, {}, 'GET', { origin: 'https://alias.example', prefix: '/internal' })
+        assert.equal(first.location, 'https://files.example/public/~/openid-connect/login?' + query)
+        assert.equal(first.session['openid-connect:openid-connect'], undefined)
+        const login = await start(h, '/folder/', true, { origin: 'https://files.example', prefix: '/public' })
+        assert.equal(login.redirectUri, 'https://files.example/public/~/openid-connect/callback')
+    })
+
+    function harness(overrides = {}, hfsConfig = { base_url: 'https://files.example/prefix/' }) {
         const config = { ...Object.fromEntries(Object.entries(plugin.config).map(([k, v]) => [k, v.defaultValue])),
-            issuer, clientId: 'hfs', _clientSecret: 'secret', publicUrl: 'https://files.example/prefix/', autoCreate: true, ...overrides }
+            issuer, clientId: 'hfs', _clientSecret: 'secret', autoCreate: true, ...overrides }
         const accounts = new Map()
         const h = { config, accounts }
         const internal = {
@@ -211,7 +229,8 @@ test('OIDC authorization code flow and HFS account boundaries', async t => {
             assert.ok(path in modules)
             return modules[path]
         }, Const: { ALLOW_SESSION_IP_CHANGE: 'allow_session_ip_change' },
-            getConfig: k => config[k], getAccount: name => accounts.get(name), getUsernames: () => [...accounts.keys()],
+            getConfig: k => config[k], getHfsConfig: k => hfsConfig[k],
+            getAccount: name => accounts.get(name), getUsernames: () => [...accounts.keys()],
             async updateAccount(account, changes) { Object.assign(account, changes) },
             async addAccount(username, properties) {
                 const a = { username: username.toLowerCase(), ...properties }
@@ -222,9 +241,12 @@ test('OIDC authorization code flow and HFS account boundaries', async t => {
             subscribeConfig(keys, callback) { h.changed = callback; callback() },
             setInterval() {}, log() {}, events: { emitAsync: async () => ({ isDefaultPrevented: () => h.blockLogin }) },
         })
-        h.request = async (path, querystring = '', session = {}, method = 'GET') => {
+        h.request = async (path, querystring = '', session = {}, method = 'GET', address = {}) => {
+            const origin = address.origin || 'https://files.example'
+            const prefix = address.prefix === undefined ? '/prefix' : address.prefix
             const ctx = { path: '/~/openid-connect' + path, querystring, query: Object.fromEntries(new URLSearchParams(querystring)),
-                session, method, state: { params: false }, headers: {}, status: 404,
+                URL: new URL(origin + '/~/openid-connect' + path),
+                session, method, state: { params: false, revProxyPath: prefix }, headers: {}, status: 404,
                 stop() { this.stopped = true }, set(k, v) { this.headers[k] = v },
                 redirect(url) { this.location = url; this.status = 302 },
                 throw(status, message) { throw Object.assign(Error(message), { status, expose: true }) } }
@@ -234,9 +256,9 @@ test('OIDC authorization code flow and HFS account boundaries', async t => {
         return h
     }
 
-    async function start(h, path = '/prefix/folder/', allowIpChange = false) {
+    async function start(h, path = '/folder/', allowIpChange = false, address) {
         const ctx = await h.request('/login', 'returnTo=' + encodeURIComponent(path)
-            + (allowIpChange ? '&allow_session_ip_change=1' : ''))
+            + (allowIpChange ? '&allow_session_ip_change=1' : ''), {}, 'GET', address)
         assert.equal(ctx.status, 302, ctx.body)
         assert.equal(ctx.headers['Cache-Control'], 'no-store')
         const url = new URL(ctx.location)
@@ -246,10 +268,10 @@ test('OIDC authorization code flow and HFS account boundaries', async t => {
             redirectUri: url.searchParams.get('redirect_uri') }
     }
 
-    async function finish(h, login, claims = {}, badSignature = false, query = {}) {
+    async function finish(h, login, claims = {}, badSignature = false, query = {}, address) {
         const code = 'code-' + codes.size
         codes.set(code, { ...login, claims, badSignature })
-        return h.request('/callback', new URLSearchParams({ state: login.state, code, ...query }).toString(), login.session)
+        return h.request('/callback', new URLSearchParams({ state: login.state, code, ...query }).toString(), login.session, 'GET', address)
     }
 
     function json(value) { return new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } }) }

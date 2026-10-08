@@ -12,8 +12,7 @@ Copy `dist` into HFS's `plugins` directory and name the copied folder `openid-co
 
 1. Set **Issuer URL** to the provider's issuer, e.g. `https://sso.example.com/realms/my-realm`. Discovery is automatic; do not append `/.well-known/openid-configuration`.
 2. Enter the **Client ID** and **Client secret** registered with the provider. Leave the secret empty for a public client. Confidential clients use `client_secret_post`.
-3. Set **Public HFS URL** to the externally visible HTTPS address, including a proxy prefix if present: `https://files.example.com/` or `https://files.example.com/hfs/`.
-4. Register this exact callback with the provider:
+3. Register this exact callback with the provider, using HFS's main address:
 
    ```text
    https://files.example.com/~/openid-connect/callback
@@ -21,12 +20,12 @@ Copy `dist` into HFS's `plugins` directory and name the copied folder `openid-co
 
    With the `/hfs/` prefix, it becomes `https://files.example.com/hfs/~/openid-connect/callback`.
 
-5. Choose who can get an HFS account:
+4. Choose who can get an HFS account:
    - **Create accounts on first login** is off by default. Enable it to allow users authenticated by this provider to create accounts, optionally assigning **Groups for new accounts**. New usernames use **Username prefix** (default `oidc-`), followed by the `preferred_username` claim or the subject if unavailable. Leave the prefix empty to use the claim alone. Changing the prefix affects only new accounts; existing accounts keep their names and identity links. No local password is created.
    - **Link existing accounts** explicitly maps a subject (`sub`) from this issuer to an existing HFS account. To prepare an account without a password before its first OIDC login, create it as a **group** in HFS, configure its permissions, then select it here. Saving the mapping enables plugin authentication on that same account: no second account is created. Existing login methods and permissions are preserved. This also allows limiting access to selected identities while automatic creation stays off.
-6. Reload the HFS frontend and open its login dialog. The **OpenID Connect** button starts the provider login. **Login button text** can give it a provider-specific label.
+5. Reload the HFS frontend and open its login dialog. The **OpenID Connect** button starts the provider login. **Login button text** can give it a provider-specific label.
 
-The issuer and all provider endpoints must use HTTPS. When HTTPS terminates at a reverse proxy, configure HFS's proxy support and forward the prefix as described in the [HFS reverse-proxy guide](https://github.com/rejetto/hfs/wiki/Reverse-proxy). The login button sends users to the configured public HFS address before starting authentication, so the session cookie is available at the callback even when the frontend was opened through another address.
+The issuer, provider endpoints and public HFS address must use HTTPS. The plugin uses HFS's configured **Main address** (`base_url`) when available; otherwise it derives the address from the request that starts the login. When HTTPS terminates at a reverse proxy, configure HFS's proxy support and forward the prefix as described in the [HFS reverse-proxy guide](https://github.com/rejetto/hfs/wiki/Reverse-proxy). If users can open HFS through aliases, configure its Main address so the plugin moves the browser to the canonical address before creating the OIDC transaction and session cookie.
 
 ## Keycloak example
 
